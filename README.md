@@ -107,28 +107,30 @@ yarn test --runInBand
 yarn start:shop_srv.dev
 ```
 
-## CI и Kubernetes
+## CI и доставка
 
-Репозиторий содержит `code/` (исходники, Yarn и outbox submodule), root Dockerfile,
-`.github/` и `helm/`. Helm values приложения задают ссылки на Secrets, а значения
-среды и содержимое `.env` ConfigMap находятся в `helm/dev/values.yaml`.
+Push в `development` запускает build → publish → параллельно test/migrate → deploy.
+`test` — отдельная job с unit/компонентными тестами из Docker target `tests`.
+Если тесты или миграции не прошли, deploy не запускается.
+Сборка, тесты и публикация выполняются на GitHub-hosted runners;
+migrate/deploy — на repository-scoped runner в dev VM.
+Обычная раскатка выполняется Helm с ожиданием готовности и проверкой image digest.
+Argo CD продолжает управлять платформой, но не этим приложением.
 
-GitHub CI development/release/*: build/test → isolated smoke → GHCR publish.
-Образ Node 24 работает от non-root с read-only filesystem; включает собранную
-общую библиотеку `@sellgar/outbox`. В image и Git нет секретных значений.
-Smoke поднимает пустые PostgreSQL 16/RabbitMQ, применяет девять миграций дважды,
-проверяет RMQ create/read/update/search/validation/version conflict, получает
-упорядоченные shop.created/shop.updated через exchange и проверяет потерю
-readiness при отключении тестового RabbitMQ. Тестовые volumes удаляются.
+Docker targets: `application`, `tests`, `migration`.
+Миграционный образ запускает TypeORM CLI отдельной Kubernetes Job до раскатки приложения. В runtime приложения миграции автоматически не запускаются.
 
-Ручной production workflow продвигает проверенный release digest после merge
-release/* → master и готовит back-merge PR. Prod deployment пока не подключён.
+Настройки среды хранятся в `helm/dev/values.yaml`, Secret refs — в
+`helm/values.app.yaml`. Версионный immutable ConfigMap монтируется через
+`environmentFile`; значения credentials не передаются в GitHub-hosted jobs или Git.
+Внутренний HTTP-порт — 8080, в dev одна реплика.
 
-Dev Argo CD Application находится в infrastructure `services/shop-service/`.
-CloudNativePG создаёт отдельные базу/роль `shop_srv` из `shop-database` Secret.
-Migration Sync Job завершается до новой реплики. Runtime `.env` монтируется из
-ConfigMap, credentials DB/RabbitMQ передаются Secret refs через environment.
-Все внутренние HTTP listeners/Services используют 8080. `/health` проверяет БД
-и RMQ consumer; внешнего Ingress у Shop нет, HTTP API остаётся в admin gateway.
+PR запускает build/test без публикации и деплоя. Push в `release/*` публикует
+кандидат с `release.json`; ручной production workflow из `master` принимает
+`candidate-<run-number>.<attempt>`, проверяет успешный исходный CI и идентичность
+дерева, продвигает те же digest без пересборки. Production ещё не подготовлен:
+нужны его values, Secrets, runner и GitHub environment protections.
+Откат миграций в эту схему не включён.
 
-Сервис разворачивается с пустой базой, без переноса локальных магазинов.
+Общие workflows закреплены тегом `delivery-v0.6.0` в `sellgar.infrastructure`.
+Порядок установки runner и передачи управления: [доставка приложений](https://github.com/pyatakovvg/sellgar.infrastructure/blob/development/docs/application-delivery.md).

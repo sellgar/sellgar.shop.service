@@ -47,9 +47,13 @@ yarn test --runInBand
 - Доменные операции остаются RMQ. Внутренний `/health` на PORT (default 8080)
   проверяет PostgreSQL и подключение command consumer. Внешний Ingress запрещён.
 - Глобальные pipe/filter наследуются RMQ listener через inheritAppConfig.
-- Миграции выполняются Sync Job до Deployment. Конфигурация без секретов монтируется
+- Миграции выполняются отдельной Kubernetes Job до Deployment. Конфигурация без секретов монтируется
   как `/app/.env`; credentials берутся из Kubernetes Secrets.
 - CI recursive checkout получает outbox submodule. Runtime image содержит его
   package.json и dist, чтобы production workspace dependency разрешалась штатно.
-- `.github/scripts/smoke-image.py` проверяет пустую БД, повторный запуск всех
-  миграций, RMQ CRUD/search/version conflict, порядок outbox events и readiness.
+
+## Контракт CI/CD
+
+- Отдельный Docker target `tests` и job `test` обязательны; деплой зависит от успешных тестов.
+- Есть отдельный `migration` image и job `migrate`; test и migrate идут параллельно до deploy.
+- CI/CD и конфигурация описаны в разделе «CI и доставка» README. Python/smoke wrappers удалены; команды Helm/kubectl видны в общих workflows.
