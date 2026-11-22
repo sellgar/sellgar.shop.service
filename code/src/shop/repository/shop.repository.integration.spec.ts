@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 
+import { CursorPagination } from '@sellgar/pagination';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
@@ -32,7 +33,11 @@ describeDatabase('ShopRepository full-text search in PostgreSQL', () => {
     await queryRunner.connect();
     await queryRunner.startTransaction();
     jest.spyOn(dataSource, 'getRepository').mockImplementation((target) => queryRunner.manager.getRepository(target));
-    repository = new ShopRepository(dataSource, {} as ShopOutboxService);
+    repository = new ShopRepository(
+      dataSource,
+      {} as ShopOutboxService,
+      new CursorPagination('test-pagination-key-at-least-32-bytes'),
+    );
 
     await queryRunner.query(
       `
@@ -84,8 +89,8 @@ describeDatabase('ShopRepository full-text search in PostgreSQL', () => {
   });
 
   it('matches Russian word forms and case across names', async () => {
-    const result = await repository.getAll(50, 0, `  ${prefix} КНИГА  `);
-    expect(result.total).toBe(2);
+    const result = await repository.getAll(50, undefined, `  ${prefix} КНИГА  `);
+    expect(result.items.length).toBe(2);
     expect(result.items.map((shop) => shop.uuid)).toEqual(books);
   });
 
@@ -93,14 +98,14 @@ describeDatabase('ShopRepository full-text search in PostgreSQL', () => {
     const uuid = randomUUID();
     await queryRunner.query('INSERT INTO shop (uuid, name) VALUES ($1, $2)', [uuid, `${prefix} Проверка реквизитов`]);
     try {
-      const result = await repository.getAll(50, 0, `${prefix} ПРО`);
-      expect(result.total).toBe(1);
+      const result = await repository.getAll(50, undefined, `${prefix} ПРО`);
+      expect(result.items.length).toBe(1);
       expect(result.items.map((shop) => shop.uuid)).toEqual([uuid]);
-      expect((await repository.getAll(50, 0, 'про')).items.map((shop) => shop.uuid)).toContain(uuid);
-      expect((await repository.getAll(50, 0, `${prefix} рекв`)).items.map((shop) => shop.uuid)).toEqual([uuid]);
-      expect((await repository.getAll(50, 0, `${prefix} проверку рекв`)).items.map((shop) => shop.uuid)).toEqual([
-        uuid,
-      ]);
+      expect((await repository.getAll(50, undefined, 'про')).items.map((shop) => shop.uuid)).toContain(uuid);
+      expect((await repository.getAll(50, undefined, `${prefix} рекв`)).items.map((shop) => shop.uuid)).toEqual([uuid]);
+      expect(
+        (await repository.getAll(50, undefined, `${prefix} проверку рекв`)).items.map((shop) => shop.uuid),
+      ).toEqual([uuid]);
     } finally {
       await queryRunner.query('DELETE FROM shop WHERE uuid = $1', [uuid]);
     }
@@ -110,9 +115,9 @@ describeDatabase('ShopRepository full-text search in PostgreSQL', () => {
     const uuid = randomUUID();
     await queryRunner.query('INSERT INTO shop (uuid, name) VALUES ($1, $2)', [uuid, `${prefix} Sellgar`]);
     try {
-      expect((await repository.getAll(50, 0, `${prefix} Sel`)).items.map((shop) => shop.uuid)).toEqual([uuid]);
-      expect((await repository.getAll(50, 0, `${prefix} s`)).items.map((shop) => shop.uuid)).toEqual([uuid]);
-      const found = await repository.getAll(50, 0, `${prefix} ${digits.slice(0, 5)}`);
+      expect((await repository.getAll(50, undefined, `${prefix} Sel`)).items.map((shop) => shop.uuid)).toEqual([uuid]);
+      expect((await repository.getAll(50, undefined, `${prefix} s`)).items.map((shop) => shop.uuid)).toEqual([uuid]);
+      const found = await repository.getAll(50, undefined, `${prefix} ${digits.slice(0, 5)}`);
       expect(new Set(found.items.map((shop) => shop.uuid))).toEqual(new Set([organization, entrepreneur]));
     } finally {
       await queryRunner.query('DELETE FROM shop WHERE uuid = $1', [uuid]);
@@ -120,10 +125,10 @@ describeDatabase('ShopRepository full-text search in PostgreSQL', () => {
   });
 
   it('paginates shops without duplicating joined contacts and addresses', async () => {
-    const first = await repository.getAll(1, 0, `${prefix} книга`);
-    const second = await repository.getAll(1, 1, `${prefix} книга`);
-    expect(first.total).toBe(2);
-    expect(second.total).toBe(2);
+    const first = await repository.getAll(1, undefined, `${prefix} книга`);
+    const second = await repository.getAll(1, first.meta.nextToken!, `${prefix} книга`);
+    expect(first.items.length).toBe(1);
+    expect(second.items.length).toBe(1);
     expect(first.items.map((shop) => shop.uuid)).toEqual([books[0]]);
     expect(second.items.map((shop) => shop.uuid)).toEqual([books[1]]);
     expect(first.items[0].contacts).toHaveLength(2);
@@ -153,10 +158,14 @@ describeDatabase('ShopRepository full-text search in PostgreSQL', () => {
   });
 
   it('preserves address array order after saving and changing an address type', async () => {
-    const writeRepository = new ShopRepository(dataSource, {
-      created: jest.fn(),
-      updated: jest.fn(),
-    } as unknown as ShopOutboxService);
+    const writeRepository = new ShopRepository(
+      dataSource,
+      {
+        created: jest.fn(),
+        updated: jest.fn(),
+      } as unknown as ShopOutboxService,
+      new CursorPagination('test-pagination-key-at-least-32-bytes'),
+    );
     const addresses = [
       { type: ShopAddressType.RETURNS, address: 'Первый адрес' },
       { type: ShopAddressType.CLAIMS, address: 'Второй адрес' },
@@ -188,18 +197,18 @@ describeDatabase('ShopRepository full-text search in PostgreSQL', () => {
       [entrepreneur, entrepreneurInn],
     ]) {
       for (const term of [inn, inn.slice(0, 5)]) {
-        const result = await repository.getAll(50, 0, `${prefix} ${term}`);
-        expect(result.total).toBe(1);
+        const result = await repository.getAll(50, undefined, `${prefix} ${term}`);
+        expect(result.items.length).toBe(1);
         expect(result.items.map((shop) => shop.uuid)).toEqual([uuid]);
       }
     }
   });
 
   it('searches organization names, entrepreneur names and legal identifiers', async () => {
-    const legalName = await repository.getAll(50, 0, `${prefix} северная`);
-    const fullName = await repository.getAll(50, 0, `${prefix} Иванов`);
-    const inn = await repository.getAll(50, 0, organizationInn);
-    const ogrnip = await repository.getAll(50, 0, digits);
+    const legalName = await repository.getAll(50, undefined, `${prefix} северная`);
+    const fullName = await repository.getAll(50, undefined, `${prefix} Иванов`);
+    const inn = await repository.getAll(50, undefined, organizationInn);
+    const ogrnip = await repository.getAll(50, undefined, digits);
     expect(legalName.items.map((shop) => shop.uuid)).toEqual([organization]);
     expect(fullName.items.map((shop) => shop.uuid)).toEqual([entrepreneur]);
     expect(inn.items.map((shop) => shop.uuid)).toEqual([organization]);
@@ -207,27 +216,29 @@ describeDatabase('ShopRepository full-text search in PostgreSQL', () => {
   });
 
   it('keeps empty searches unfiltered and counts missing matches as zero', async () => {
-    const unfiltered = await repository.getAll(50, 0);
-    expect(await repository.getAll(50, 0, '  ')).toEqual(unfiltered);
-    const missing = await repository.getAll(50, 0, `${prefix} отсутствующий`);
-    expect(missing.total).toBe(0);
+    const unfiltered = await repository.getAll(50, undefined);
+    expect(await repository.getAll(50, undefined, '  ')).toEqual(unfiltered);
+    const missing = await repository.getAll(50, undefined, `${prefix} отсутствующий`);
+    expect(missing.items.length).toBe(0);
     expect(missing.items).toEqual([]);
   });
 
   it('refreshes the indexed search after a shop rename', async () => {
     await queryRunner.query('UPDATE shop SET name = $1 WHERE uuid = $2', [`${prefix} Архив`, books[1]]);
     try {
-      expect((await repository.getAll(50, 0, `${prefix} книга`)).total).toBe(1);
-      expect((await repository.getAll(50, 0, `${prefix} архив`)).items.map((shop) => shop.uuid)).toEqual([books[1]]);
+      expect((await repository.getAll(50, undefined, `${prefix} книга`)).items.length).toBe(1);
+      expect((await repository.getAll(50, undefined, `${prefix} архив`)).items.map((shop) => shop.uuid)).toEqual([
+        books[1],
+      ]);
     } finally {
       await queryRunner.query('UPDATE shop SET name = $1 WHERE uuid = $2', [`${prefix} Книги зелёные`, books[1]]);
     }
   });
 
   it('treats punctuation and SQL syntax as search input', async () => {
-    const result = await repository.getAll(50, 0, `${prefix}' ; DROP TABLE shop; --`);
-    expect(result.total).toBe(0);
-    expect((await repository.getAll(50, 0, "' :* ! () & | --")).total).toBe(0);
-    expect((await repository.getAll(50, 0, prefix)).total).toBe(4);
+    const result = await repository.getAll(50, undefined, `${prefix}' ; DROP TABLE shop; --`);
+    expect(result.items.length).toBe(0);
+    expect((await repository.getAll(50, undefined, "' :* ! () & | --")).items.length).toBe(0);
+    expect((await repository.getAll(50, undefined, prefix)).items.length).toBe(4);
   });
 });

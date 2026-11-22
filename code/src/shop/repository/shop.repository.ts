@@ -1,3 +1,4 @@
+import { CursorPagination } from '@sellgar/pagination';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { isEmail, isPhoneNumber } from 'class-validator';
@@ -24,18 +25,17 @@ export class ShopRepository {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly outbox: ShopOutboxService,
+    private readonly pagination: CursorPagination,
   ) {}
 
-  async getAll(limit: number, offset: number, term?: string) {
+  async getAll(limit: number, nextToken?: string, term?: string) {
     const query = this.dataSource
       .getRepository(ShopModel)
       .createQueryBuilder('shop')
       .leftJoinAndSelect('shop.contacts', 'contacts')
       .leftJoinAndSelect('shop.addresses', 'addresses')
       .orderBy('shop.createdAt', 'DESC')
-      .addOrderBy('shop.uuid', 'ASC')
-      .take(limit)
-      .skip(offset);
+      .addOrderBy('shop.uuid', 'ASC');
 
     const searchTerm = term?.trim();
     if (searchTerm) {
@@ -74,8 +74,18 @@ export class ShopRepository {
       );
     }
 
-    const [items, total] = await query.getManyAndCount();
-    return { items, total, limit, offset };
+    return this.pagination.read(
+      query,
+      { limit, nextToken },
+      {
+        scope: 'shop.shop.list',
+        filters: { term: searchTerm || undefined },
+        order: [
+          { expression: 'shop.createdAt', direction: 'DESC', type: 'timestamptz' },
+          { expression: 'shop.uuid', direction: 'ASC', type: 'uuid' },
+        ],
+      },
+    );
   }
 
   getByUuid(uuid: string): Promise<ShopModel> {

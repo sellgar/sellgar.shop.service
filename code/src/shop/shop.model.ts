@@ -6,6 +6,7 @@ import { ShopContactModel } from './shop-contact.model';
 
 @Entity('shop')
 @Index('shop_search_vector_idx', { synchronize: false })
+@Index('shop_cursor_idx', { synchronize: false })
 export class ShopModel {
   @PrimaryGeneratedColumn('uuid')
   uuid: string;

@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 
 import { validateEntity } from '../../common/validate-entity';
 import { ShopEntity } from '../entity/shop.entity';
-import { ShopPageEntity, ShopPageMetaEntity } from '../entity/shop-page.entity';
+import { ShopPageEntity } from '../entity/shop-page.entity';
+import { ShopPageMetaEntity } from '../entity/shop-page-meta.entity';
 import { ShopRepository } from '../repository/shop.repository';
 import { CreateShopCommand } from './command/create-shop.command';
 import { UpdateShopCommand } from './command/update-shop.command';
@@ -11,12 +12,12 @@ import { UpdateShopCommand } from './command/update-shop.command';
 export class ShopService {
   constructor(private readonly repository: ShopRepository) {}
 
-  async getAll(limit: number, offset: number, term?: string): Promise<ShopPageEntity> {
-    const result = await this.repository.getAll(limit, offset, term);
+  async getAll(limit: number, nextToken?: string, term?: string): Promise<ShopPageEntity> {
+    const result = await this.repository.getAll(limit, nextToken, term);
     return validateEntity(
       Object.assign(new ShopPageEntity(), {
-        data: result.items.map(ShopEntity.fromModel),
-        meta: Object.assign(new ShopPageMetaEntity(), { totalRows: result.total, limit, offset }),
+        items: result.items.map(ShopEntity.fromModel),
+        meta: Object.assign(new ShopPageMetaEntity(), result.meta),
       }),
     );
   }
